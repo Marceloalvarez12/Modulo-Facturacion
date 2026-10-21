@@ -36,10 +36,10 @@ Los archivos `functions/.env.<ID_DEL_CLON>` y `app/firebase.clone.local.json` so
 
 El titular o la contadora debe confirmar:
 
-- CUIT emisora y condición frente al IVA.
+- CUIT emisora y condición frente al IVA ([descargar la constancia de inscripción](https://www.arca.gob.ar/buscador-consultas-publicas/) y [revisar qué significa el estado de la CUIT](https://www.arca.gob.ar/estadosadministrativosCUIT/estado-cuit/efectos.asp)).
 - Razón social, domicilio fiscal/comercial, ingresos brutos y fecha de inicio de actividades.
 - Tipo de comprobante habilitado y tratamiento fiscal de los productos.
-- Punto de venta para Web Services de oficina y de San Pablo, ambos exclusivos del sistema.
+- Punto de venta para Web Services de oficina y de San Pablo, ambos exclusivos del sistema (se crean en el portal de ARCA, servicio **Administración de Puntos de Venta**, tipo **"Factura electrónica - Web Services" (RECE)**; ver [referencia de comprobantes](https://www.arca.gob.ar/facturacion/regimen-general/comprobantes.asp)). Ejemplo: `0006` para oficina y `0007` para San Pablo.
 - Cómo se identifica la sucursal en los remitos. San Pablo debe normalizarse a `san_pablo`; si el campo no llega, Functions usa el punto de venta por defecto.
 - Documentación del receptor, datos de consumidor final y reglas de redondeo.
 
@@ -61,7 +61,15 @@ openssl req -new -key secrets/arca_private_key.pem \
   -out secrets/arca_homologacion.csr
 ```
 
-La CUIT del subject debe seguir lo que WSASS requiere para la persona que genera el certificado. No subas el `.key` a WSASS. Desde una estación autorizada, carga el CSR en WSASS, crea el certificado y guárdalo directamente en la carpeta segura del gateway como `secrets/arca_certificate.pem`. Autoriza el alias para la CUIT emisora y el servicio `wsfe`.
+La CUIT del subject debe seguir lo que WSASS requiere para la persona que genera el certificado (normalmente el CUIT/CUIL del titular que ingresa con su Clave Fiscal). Ejemplo completo:
+
+```bash
+openssl req -new -key secrets/arca_private_key.pem \
+  -subj "/C=AR/O=Josen SA/CN=facturacion-app/serialNumber=CUIT 20123456789" \
+  -out secrets/arca_homologacion.csr
+```
+
+No subas el `.key` a WSASS. Desde una estación autorizada, entra a [WSASS](https://www.arca.gob.ar/ws/WSASS/html/), carga el CSR y crea el certificado ([crear certificado](https://www.arca.gob.ar/ws/WSASS/html/crearcertificado.html), [manual completo](https://www.arca.gob.ar/ws/WSASS/WSASS_manual.pdf)). Guárdalo directamente en la carpeta segura del gateway como `secrets/arca_certificate.pem`. Después autoriza el alias para la CUIT emisora y el servicio `wsfe` ([crear autorización](https://www.arca.gob.ar/ws/WSASS/html/crearautorizacion.html), [ver servicios autorizados](https://www.arca.gob.ar/ws/WSASS/html/verservicios.html)).
 
 Si se necesita transferir el CSR público a la estación que usa WSASS, eso no expone la clave privada. Evita transferir el `.key`; si la política interna exige generar el certificado en otra máquina, copia el archivo al gateway por un canal cifrado directo y elimina las copias temporales.
 
@@ -116,9 +124,35 @@ El backend tiene pruebas con ARCA simulado y una prueba de contrato Functions↔
 
 La homologación se considera completa cuando la conexión real pasa el diagnóstico, se recorren los casos anteriores y la contadora aprueba los datos e importes. Producción requiere certificado distinto, ambiente `production`, autorización y punto de venta confirmados, respaldo de secretos y un despliegue dirigido explícitamente al proyecto productivo. Esa etapa queda fuera de esta preparación.
 
+## Anexo: enlaces y ejemplos para el estudio contable
+
+Tareas del estudio con los enlaces oficiales correspondientes:
+
+| Tarea | Dónde | Ejemplo esperado |
+|---|---|---|
+| Descargar constancia de inscripción | [Buscador ARCA](https://www.arca.gob.ar/buscador-consultas-publicas/) | CUIT activa, condición `IVA Responsable Inscripto` |
+| Verificar habilitación a comprobantes electrónicos | [Emisión y autorización](https://www.arca.gob.ar/fe/emision-autorizacion/solicitud-autorizacion.asp) | Regimen general habilitado |
+| Crear puntos de venta Web Services | Portal ARCA → **Administración de Puntos de Venta** (tipo RECE - Web Services) | `0006` oficina, `0007` San Pablo |
+| Entrar a WSASS (solo homologación) | [WSASS](https://www.arca.gob.ar/ws/WSASS/html/) ([cómo adherirse](https://www.arca.gob.ar/ws/WSASS/WSASS_como_adherirse.pdf)) | Login con Clave Fiscal del titular |
+| Crear certificado desde el CSR | [Crear certificado](https://www.arca.gob.ar/ws/WSASS/html/crearcertificado.html) | Alias `facturacion-app`, cert `.crt` descargado |
+| Autorizar certificado a WSFE | [Crear autorización](https://www.arca.gob.ar/ws/WSASS/html/crearautorizacion.html) | Servicio `wsfe` autorizado para la CUIT emisora |
+| Revisar servicios autorizados | [Ver servicios](https://www.arca.gob.ar/ws/WSASS/html/verservicios.html) | `wsfe` figura como autorizado |
+
+Ejemplos concretos de cada paso (valores de prueba, no reales):
+
+- CSR subject: `CN=facturacion-app, serialNumber=CUIT 20123456789, O=Josen SA, C=AR`.
+- El certificado de homologación lo emite la autoridad de test (issuer `Computadores de Test`); el de producción es otro y se tramita por separado.
+- Si el certificado lo genera el estudio contable en lugar del titular: la CUIT del CSR debe ser la del representado y el estudio necesita autorización de administrador de certificados para esa CUIT ([administrar representados](https://www.arca.gob.ar/registro-unico-tributario/funcionalidades/funcionalidades.asp)).
+- Qué debe devolverle el estudio al desarrollador: CUIT emisora, condición fiscal, números de punto de venta (oficina/San Pablo) y el archivo `.crt` del certificado de homologación. **Nunca** la Clave Fiscal ni la clave privada.
+
+Referencias técnicas de ARCA:
+
+- [Documentación WSFEv1](https://www.arca.gob.ar/ws/documentacion/ws-factura-electronica.asp) y [arquitectura general de web services](https://www.arca.gob.ar/ws/documentacion/arquitectura-general.asp).
+- [WSAA: cómo funcionan los tickets](https://www.arca.gob.ar/ws/documentacion/wsaa.asp) y [certificados](https://www.arca.gob.ar/ws/documentacion/certificados.asp).
+- [Entorno de prueba de factura electrónica](https://www.arca.gob.ar/fe/ayuda/entorno-prueba.asp).
+
 ## Referencias
 
-- [Guía detallada de homologación](GUIA_ARCA_HOMOLOGACION.md)
 - [Plan V2](PLAN.md)
 - [Estado de integración de la app](PLAN_INTEGRACION_APP.md)
 - [Instalación del gateway](deploy/INSTALACION.md)
